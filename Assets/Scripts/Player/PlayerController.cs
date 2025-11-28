@@ -3,7 +3,7 @@ using UnityEngine;
 
 public class PlayerController : MonoBehaviour
 {
-        //---------inputs------///
+    //---------inputs------///
 
     public Transform viewPoint; // where the eyes are
     public float mouseSensitivity = 1f;
@@ -11,7 +11,7 @@ public class PlayerController : MonoBehaviour
     private Vector2 mouseInput;
 
     public bool invertLook;  //how you want the mouse to work (like a plane or regular)
-    //speeds and movement
+    //---speeds and movement---//
     public float walkSpeed = 5f, runSpeed = 8f, activeMoveSpeed;
     //private float activeMoveSpeed;
     private Vector3 moveDir, movement;
@@ -21,17 +21,27 @@ public class PlayerController : MonoBehaviour
 
     private Camera cam;
 
-    public float jumpForce = 12f, gravityMod= 2.5f;  //jump force and extra gravity force fir a nice fall 
+    public float jumpForce = 12f, gravityMod = 2.5f;  //jump force and extra gravity force fir a nice fall 
 
+    //----ground check---//
     public Transform groundCheckpoint;// extra check that is grounded using a raycast
     private bool isGrounded;
     public LayerMask groundLayers; //using the ground layer as a target for the raycast
 
+    //----bullets  ----//
     public GameObject bulletImpact; //the quads of the bullet hit prefab
-    public float timeBetweenShots = 0.1f;// multishot
     private float shotCounter;
 
-    //emmo use 
+    //----muzzle slow show---//
+    public float muzzleDisplayTime;
+    private float muzzleCounter;
+
+
+    //----gun settings---//
+    public Gun[] allGuns;
+    private int selectedGun;
+
+    //----emmo use ---// unused yet  
     private int bullets, bulletUsed;
 
     //--------- end inputs------///
@@ -42,14 +52,20 @@ public class PlayerController : MonoBehaviour
         Cursor.lockState = CursorLockMode.Locked;
         //so the camera will respawn
         cam = Camera.main;
+        SwitchGun();
+
+        //----spawning a player at a random spawn point from the spawn manager---//
+        Transform newPlayerSpawnPoint = SpawnManager.instance.GetRandomSpawnPoint();
+        transform.position = newPlayerSpawnPoint.position;
+        transform.rotation = newPlayerSpawnPoint.rotation;
     }
 
     // Update is called once per frame
     void Update()
     {
-        mouseInput = new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y"))* mouseSensitivity;   //getting input from player 
+        mouseInput = new Vector2(Input.GetAxisRaw("Mouse X"), Input.GetAxisRaw("Mouse Y")) * mouseSensitivity;   //getting input from player 
         transform.rotation = Quaternion.Euler(transform.rotation.eulerAngles.x, transform.rotation.eulerAngles.y + mouseInput.x, transform.rotation.eulerAngles.z); // looking to the side you move the player
-        
+
         verticalRotStore += mouseInput.y; // because of the Quaternions you need to limit and edit the looking up down
         verticalRotStore = Mathf.Clamp(verticalRotStore, -60f, 60f);
 
@@ -97,12 +113,23 @@ public class PlayerController : MonoBehaviour
 
         charCon.Move(movement * activeMoveSpeed * Time.deltaTime);
 
+        // ---deactivate muzzle flash----//
+        for (int i = 0; i < allGuns[selectedGun].muzzleFlash.Length; i++)
+        {
+            if(allGuns[selectedGun].muzzleFlash[i].activeInHierarchy)
+            {
+                muzzleCounter -= Time.deltaTime;
+                if (muzzleCounter <=0)
+                    allGuns[selectedGun].muzzleFlash[i].SetActive(false);
+            }
+        }
 
         if (Input.GetMouseButtonDown(0)) //one shot
         {
             Shoot();
         }
-        if (Input.GetMouseButton(0))  //if you keep pressing then you can multishoot  
+        //if you keep pressing andd the gun is automatic then you can multishoot  
+        if (Input.GetMouseButton(0) && allGuns[selectedGun].isAotumatic)  
         {
             shotCounter -= Time.deltaTime;
             if (shotCounter <= 0)
@@ -111,11 +138,27 @@ public class PlayerController : MonoBehaviour
             }
         }
 
-        //   ----unlock curser----//
+        //----choosing guns ----//
+        if (Input.GetAxisRaw("Mouse ScrollWheel") > 0f)
+        {
+            selectedGun++;
+            if (selectedGun >= allGuns.Length) selectedGun = 0;// roll to begining of the list
+            SwitchGun();
+        }
+        else if (Input.GetAxisRaw("Mouse ScrollWheel") < 0f)
+        {
+            selectedGun--;
+            if (selectedGun < 0) selectedGun = allGuns.Length -1;// roll to end of the list
+            SwitchGun();
+        }
+        
+
+
+        //   ----unlock curser usidng escape----//
         if (Input.GetKeyDown(KeyCode.Escape))// to unlock the cursor when you press escape key
         {
             Cursor.lockState = CursorLockMode.None;
-        }else if (Cursor.lockState == CursorLockMode.None)
+        } else if (Cursor.lockState == CursorLockMode.None)
         {
             if (Input.GetMouseButtonDown(0))
             {
@@ -133,15 +176,37 @@ public class PlayerController : MonoBehaviour
         if (Physics.Raycast(ray, out RaycastHit hit))
         {
             // create the prefab on the outside surface of the thing that the raycast hits
-            GameObject gameHitObj = Instantiate(bulletImpact, hit.point +(hit.normal *0.02f), Quaternion.LookRotation(hit.normal, Vector3.up));
+            GameObject gameHitObj = Instantiate(bulletImpact, hit.point + (hit.normal * 0.02f), Quaternion.LookRotation(hit.normal, Vector3.up));
             Destroy(gameHitObj, 10f); // destroy the hit points after 10 sec so you do not burden the memory 
         }
-        shotCounter = timeBetweenShots;
+        // using the time between shots in the gun itself depending on what we select
+        shotCounter = allGuns[selectedGun].timeBetweenShots;
+        
+        // ---activate muzzle flash----//
+        for (int i = 0; i < allGuns[selectedGun].muzzleFlash.Length; i++)
+        {
+            allGuns[selectedGun].muzzleFlash[i].SetActive(true);
+        }
+        muzzleCounter = muzzleDisplayTime;
     }
 
     private void LateUpdate()
     {
         cam.transform.position = viewPoint.position;
         cam.transform.rotation = viewPoint.rotation;
+    }
+
+    //-----function for actual switch gun----//
+    void SwitchGun()
+    {
+        foreach(Gun gun in allGuns)
+        {
+            gun.gameObject.SetActive(false);
+        }
+        allGuns[selectedGun].gameObject.SetActive(true);
+        for (int i = 0; i < allGuns[selectedGun].muzzleFlash.Length; i++)
+        {
+           allGuns[selectedGun].muzzleFlash[i].SetActive(false);
+        }
     }
 }
